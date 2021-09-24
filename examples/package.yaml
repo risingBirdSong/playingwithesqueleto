@@ -20,6 +20,8 @@ dependencies:
 - monad-control
 - transformers-base
 - unliftio-core
+- persistent-postgresql
+- persistent-sqlite
 
 ghc-options:
 - '-Wall'

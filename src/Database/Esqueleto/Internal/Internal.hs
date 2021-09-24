@@ -14,7 +14,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-
+{-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-redundant-constraints #-}
 
 -- | This is an internal module, anything exported by this module
@@ -71,6 +71,8 @@ import Database.Persist.Sql.Util
 import Text.Blaze.Html (Html)
 import Data.Coerce (coerce)
 import Data.Kind (Type)
+import Control.Monad.Reader
+
 
 -- | (Internal) Start a 'from' query with an entity. 'from'
 -- does two kinds of magic using 'fromStart', 'fromJoin' and
@@ -1733,6 +1735,7 @@ data DistinctClause
     -- ^ Only @DISTINCT@, SQL standard.
     | DistinctOn [SqlExpr DistinctOn]
     -- ^ @DISTINCT ON@, PostgreSQL extension.
+    -- deriving (Show, Eq)
 
 instance Semigroup DistinctClause where
     DistinctOn a     <> DistinctOn b = DistinctOn (a <> b)
@@ -2081,6 +2084,7 @@ entityAsValueMaybe = coerce
 -- string ('TLB.Builder') and a list of values to be
 -- interpolated by the SQL backend.
 data SqlExpr a = ERaw SqlExprMeta (NeedParens -> IdentInfo -> (TLB.Builder, [PersistValue]))
+  -- deriving Show
 
 -- | Data type to support from hack
 data PreprocessedFrom a = PreprocessedFrom a FromClause
@@ -2693,7 +2697,7 @@ toRawSql mode (conn, firstIdentState) query =
         -- that no name clashes will occur on subqueries that may
         -- appear on the expressions below.
         info = (projectBackend conn, finalIdentState)
-    in mconcat
+    in (mconcat
         [ makeCte        info cteClause
         , makeInsertInto info mode ret
         , makeSelect     info mode distinctClause ret
@@ -2705,8 +2709,52 @@ toRawSql mode (conn, firstIdentState) query =
         , makeOrderBy    info orderByClauses
         , makeLimit      info limitClause
         , makeLocking         lockingClause
-        ]
+        ])
 
+
+myToRawSql
+  :: (SqlSelect a r, BackendCompatible SqlBackend backend)
+  => Mode -> (backend, IdentState) -> SqlQuery a -> (TLB.Builder, [PersistValue])
+myToRawSql mode (conn, firstIdentState) query =
+    let ((ret, sd), finalIdentState) =
+            flip S.runState firstIdentState $
+            W.runWriterT $
+            unQ query
+        SideData distinctClause
+                 fromClauses
+                 setClauses
+                 whereClauses
+                 groupByClause
+                 havingClause
+                 orderByClauses
+                 limitClause
+                 lockingClause
+                 cteClause = sd
+        -- Pass the finalIdentState (containing all identifiers
+        -- that were used) to the subsequent calls.  This ensures
+        -- that no name clashes will occur on subqueries that may
+        -- appear on the expressions below.
+        info = (projectBackend conn, finalIdentState)
+
+    in (mconcat
+        [ makeCte        info cteClause
+        , makeInsertInto info mode ret
+        , makeSelect     info mode distinctClause ret
+        , makeFrom       info mode fromClauses
+        , makeSet        info setClauses
+        , makeWhere      info whereClauses
+        , makeGroupBy    info groupByClause
+        , makeHaving     info havingClause
+        , makeOrderBy    info orderByClauses
+        , makeLimit      info limitClause
+        , makeLocking         lockingClause
+        ])
+
+
+-- somefunc = let mynum = 3
+--           trace "hello" (show 1)
+--            in mynum
+      
 -- | Renders a 'SqlQuery' into a 'Text' value along with the list of
 -- 'PersistValue's that would be supplied to the database for @?@ placeholders.
 --
@@ -2726,6 +2774,18 @@ renderQueryToText
 renderQueryToText mode query = do
     backend <- R.ask
     let (builder, pvals) = toRawSql mode (backend, initialIdentState) query
+    pure (builderToText builder, pvals)
+
+myRenderQueryToText
+    :: (SqlSelect a r, BackendCompatible SqlBackend backend, Monad m)
+    => Mode
+    -- ^ Whether to render as an 'SELECT', 'DELETE', etc.
+    -> SqlQuery a
+    -- ^ The SQL query you want to render.
+    -> R.ReaderT backend m (T.Text, [PersistValue])
+myRenderQueryToText mode query = do
+    backend <- R.ask
+    let (builder, pvals) = myToRawSql mode (backend, initialIdentState) query
     pure (builderToText builder, pvals)
 
 -- | Renders a 'SqlQuery' into a 'Text' value along with the list of
@@ -3687,3 +3747,69 @@ associateJoin = foldr f start
             (\(oneOld, manyOld) (_, manyNew) -> (oneOld, manyNew ++ manyOld ))
             (entityKey one)
             (entityVal one, [many])
+
+myRenderQuerySelect
+    :: (SqlSelect a r, BackendCompatible SqlBackend backend, Monad m)
+    => SqlQuery a
+    -- ^ The SQL query you want to render.
+    -> R.ReaderT backend m (T.Text, [PersistValue])
+myRenderQuerySelect = myRenderQueryToText SELECT
+
+-- easyRender :: BackendCompatible SqlBackend backend => SqlQuery a -> backend ->  T.Text
+-- easyRender query backend =
+--     let 
+--         (text, persistValues) = 
+--             runReaderT (renderQuerySelect query) backend
+--     in
+--         spliceValues text persistValues
+
+
+
+-- spliceValues :: Text -> [PersistValue] -> Text
+-- spliceValues query values = 
+--     let
+--         fragments = 
+--             Text.splitOn "?" query
+--     in
+--         combineTexts fragments (map valueToText values)
+
+
+-- combineTexts :: [T.Text] -> [T.Text] -> T.Text
+-- combineTexts [] [] = mempty 
+-- combineTexts (r:rawsql) (v:vals) =  (r <> v) <> (combineTexts rawsql vals) 
+-- combineTexts _ _ = error "we expected two lists of equal length"
+
+
+valueToText :: PersistValue -> T.Text
+valueToText input = case input of
+    (PersistText txt) -> T.pack $ cleanString (T.unpack txt)
+    (PersistInt64 int64) -> T.pack (show int64) 
+
+convertInt64 :: PersistValue -> T.Text
+convertInt64 (PersistInt64 int64) = T.pack (show int64)  
+
+-- todo make a new function cleanText that will work with text, for now I just want to keep moving with this
+-- https://stackoverflow.com/questions/3740621/removing-string-double-quotes-in-haskell/3743602
+cleanString :: String -> String
+cleanString s@[c]                     = s
+cleanString ('"':s)  
+            | last s == '"'  = init s
+            | otherwise      = s
+cleanString ('\'':s) 
+            | last s == '\'' = init s
+            | otherwise      = s
+cleanString s                         = s
+
+-- myText = SELECT "person"."id", "person"."name", "person"."age"
+--          FROM "person"
+--          WHERE ("person"."name" = ?) AND ("person"."age" >= ?)
+
+rawsqlA =  "SELECT \"person\".\"id\", \"person\".\"name\", \"person\".\"age\"\nFROM \"person\"\nWHERE (\"person\".\"name\" = ?) AND (\"person\".\"age\" >= ?)\n"
+
+splittingquestion = T.splitOn (T.pack "?") (T.pack rawsqlA)
+splitted = ["SELECT \"person\".\"id\", \"person\".\"name\", \"person\".\"age\"\nFROM \"person\"\nWHERE (\"person\".\"name\" = ",") AND (\"person\".\"age\" >= ",")\n"]
+-- variables = [PersistText "John",PersistInt64 18]
+
+
+
+-- [PersistText "John",PersistInt64 18]

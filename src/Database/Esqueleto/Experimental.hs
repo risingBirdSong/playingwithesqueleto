@@ -204,6 +204,7 @@ module Database.Esqueleto.Experimental
     -- ** Rendering Queries
     , renderQueryToText
     , renderQuerySelect
+    , myRenderQuerySelect
     , renderQueryUpdate
     , renderQueryDelete
     , renderQueryInsertInto

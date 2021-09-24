@@ -39,8 +39,11 @@ import Database.Persist.TH
        , share
        , sqlSettings
        )
+import qualified UnliftIO.Resource as R
 
 
+-- createuser myesq --pwprompt --superuser
+-- createdb myesq
 share [ mkPersist sqlSettings
       , mkDeleteCascade sqlSettings
       , mkMigrate "migrateAll"] [persistLowerCase|
@@ -159,7 +162,9 @@ insertBlogPosts =
   -- | Insert a new blogpost for every person
   insertSelect $ from $ \p ->
     return $ BlogPost <# (val "Group Blog Post") <&> (p ^. PersonId)
-
+-- withConn :: ConnectionString
+-- withConn =
+--   R.runResourceT . withPostgresqlConn "host=localhost port=5432 user=esqutest password=esqutest dbname=esqutest"
 
 runDB :: (MonadReader ConnectionString m,
           MonadIO m,
@@ -171,7 +176,7 @@ runDB :: (MonadReader ConnectionString m,
 runDB query = do
   -- | Helper for running a query
   conn <- ask
-  withPostgresqlConn conn $ \backend -> runReaderT query backend
+  withPostgresqlConn "host=localhost port=5432 user=myesq password=myesq dbname=myesq" $ \backend -> runReaderT query backend
 
 
 setupDb :: (MonadIO m, MonadLogger m)
@@ -234,4 +239,4 @@ main = do
   where
     say :: (MonadIO m, Show a) => a -> m ()
     say = liftIO . print
-    connection = "host=localhost port=5432 user=postgres dbname=esqueleto_blog_example password=***"
+    connection = "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
