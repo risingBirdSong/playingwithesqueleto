@@ -47,6 +47,10 @@ import Database.Persist.TH
 import qualified UnliftIO.Resource as R
 import qualified Data.Text as T
 import qualified Data.Text.IO as T 
+import qualified Control.Monad.Trans.Reader as RD 
+import Database.Esqueleto.Internal.Internal (SqlSelect)
+import Control.Monad.Logger
+import Debug.Trace
 
 
 
@@ -259,30 +263,70 @@ easyRender query backend =
     in
         (uncurry spliceValues) <$> whole
 
--- easyRender'
---   :: (MonadReader ConnectionString m, MonadUnliftIO m,
---       MonadLoggerIO m,
---       SqlSelect a r) =>
---      SqlQuery a -> m T.Text
+easyRender' :: (SqlSelect a r, BackendCompatible SqlBackend backend, Monad m) => SqlQuery a -> RD.ReaderT backend m T.Text
 easyRender' query = do
-    conn <- ask
-    withPostgresqlConn conn $ \backend -> easyRender query backend
-
+  whole <- renderQuerySelect query 
+  pure $ uncurry spliceValues whole
     -- let 
-    --     whole = 
-    --         runReaderT (renderQuerySelect query)
+    --     whole = renderQuerySelect query         
     -- in
     --     (uncurry spliceValues) <$> whole
 
--- mymain :: IO ()
--- mymain = do 
---   what <- easyRender' justquery
---   print "todo"
---   where
---     connection = "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
---     -- say :: (MonadIO m, Show a) => a -> m ()
---     -- say = liftIO . print
---   -- Connection string for the postrgesql database
+myInsert :: IO ()
+myInsert = do 
+  runBlogT connection . runDB $ do
+    setupDb
+    say $ "setting up db" 
+  where
+    say :: (MonadIO m, Show a) => a -> m ()
+    say = liftIO . print
+    connection = "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
+
+myTearDown :: IO ()
+myTearDown = do 
+  runBlogT connection . runDB $ do
+    cleanDb
+    say $ "tearing down db" 
+  where
+    say :: (MonadIO m, Show a) => a -> m ()
+    say = liftIO . print
+    connection = "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
+
+
+-- callEasyRender :: (MonadReader ConnectionString m,
+--           MonadIO m,
+--           MonadBaseControl IO m,
+--           MonadUnliftIO m,
+--           MonadLoggerIO m,
+--           MonadLogger m) => m T.Text
+callEasyRender qry = do
+  --  void $ runBlogT connection . runDB $ do
+   splitquery@(txt, vals) <- runDB $ renderQuerySelect qry
+   liftIO $ T.putStrLn txt
+   liftIO $ print vals
+   ourquerystring <- runDB $ trace ("tracing...") easyRender' qry
+   pure ourquerystring
+    where 
+      connection = "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
+
+myMain = do
+   resultA <- runStderrLoggingT $ runReaderT (callEasyRender queryExampleA) "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
+   print "resultA"
+   T.putStrLn resultA
+   print "..."
+   resultB <- runStderrLoggingT $ runReaderT (callEasyRender queryExampleB) "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
+   print "resultB"
+   print "..."
+   T.putStrLn resultB
+
+
+-- renderQuerySelect
+--   :: (SqlSelect a r, BackendCompatible SqlBackend backend,
+--       Monad m) =>
+--      SqlQuery a
+--      -> Control.Monad.Trans.Reader.ReaderT
+--           backend m (Data.Text.Internal.Text, [PersistValue])
+
 
 getJohnsAndAdults :: (MonadIO m, MonadLogger m) => SqlReadT m [Entity Person]
 getJohnsAndAdults = select $ do  
@@ -291,31 +335,33 @@ getJohnsAndAdults = select $ do
                     where_ (people ^. PersonAge >=. just (val 18))
                     pure people
 
-justquery = do  
-              people <- from $ table @Person
-              where_ (people ^. PersonName ==. val "John")
-              where_ (people ^. PersonAge >=. just (val 18))
-              pure people
 
--- myRenderQuerySelect
---     :: (SqlSelect a r, BackendCompatible SqlBackend backend, Monad m)
---     => SqlQuery a
---     -- ^ The SQL query you want to render.
---     -> R.ReaderT backend m (T.Text, [PersistValue])
--- myRenderQuerySelect = myRenderQueryToText SELECT
+-- getJohns :: (MonadIO m, MonadLogger m)
+--          => SqlReadT m [Entity Person]
+-- getJohns =  select $ do  
+--                 people <- from $ table @Person
+--                 where_ (people ^. PersonName ==. val "John")
+--                 pure people
 
--- easyRender :: BackendCompatible SqlBackend backend => SqlQuery a -> backend ->  T.Text
+queryExampleA = do  
+                people <- from $ table @Person
+                where_ (people ^. PersonName ==. val "John")
+                pure people
 
+
+queryExampleB = do  
+                people <- from $ table @Person
+                where_ (people ^. PersonAge >=. just (val 18))
+                pure people
 
 
 spliceValues :: T.Text -> [PersistValue] -> T.Text
 spliceValues query values = 
     let
         fragments = 
-            T.splitOn "?" query
+            init (T.splitOn "?" query)
     in
         combineTexts fragments (map valueToText values)
-
 
 combineTexts :: [T.Text] -> [T.Text] -> T.Text
 combineTexts [] [] = mempty 
@@ -325,11 +371,16 @@ combineTexts _ _ = error "we expected two lists of equal length"
 
 valueToText :: PersistValue -> T.Text
 valueToText input = case input of
-    (PersistText txt) -> txt
+    (PersistText txt) -> (T.singleton '\'') <> txt <> (T.singleton '\'')
     (PersistInt64 int64) -> T.pack (show int64) 
+    -- missing a whole lot of cases, TODO
 
--- convertInt64 :: PersistValue -> T.Text
--- convertInt64 (PersistInt64 int64) = T.pack (show int64)  
+
+
+    -- (PersistInt64 int64) -> T.pack (show int64) 
+
+convertInt64 :: PersistValue -> T.Text
+convertInt64 (PersistInt64 int64) = T.pack (show int64)  
 --                       = s
 
 -- myText = SELECT "person"."id", "person"."name", "person"."age"
@@ -355,14 +406,16 @@ variablesAsText = [T.pack ("John"),(T.pack "18")]
 afterJoin = "SELECT \"person\".\"id\", \"person\".\"name\", \"person\".\"age\"\nFROM \"person\"\nWHERE (\"person\".\"name\" = John) AND (\"person\".\"age\" >= 18"
 
 
+aaa = init $ T.splitOn "?" ("select * from ?")
+
 -- todo make a new function cleanText that will work with text, for now I just want to keep moving with this
 -- https://stackoverflow.com/questions/3740621/removing-string-double-quotes-in-haskell/3743602
--- cleanString :: String -> String
--- cleanString s@[c]                     = s
--- cleanString ('"':s)  
---             | last s == '"'  = init s
---             | otherwise      = s
--- cleanString ('\'':s) 
---             | last s == '\'' = init s
---             | otherwise      = s
--- cleanString s   
+cleanString :: String -> String
+cleanString s@[c]                     = s
+cleanString ('"':s)  
+            | last s == '"'  = init s
+            | otherwise      = s
+cleanString ('\'':s) 
+            | last s == '\'' = init s
+            | otherwise      = s
+cleanString s   = s

@@ -71,7 +71,7 @@ import Database.Persist.Sql.Util
 import Text.Blaze.Html (Html)
 import Data.Coerce (coerce)
 import Data.Kind (Type)
-import Control.Monad.Reader
+import qualified Data.Text as T 
 
 
 -- | (Internal) Start a 'from' query with an entity. 'from'
@@ -3765,11 +3765,11 @@ myRenderQuerySelect = myRenderQueryToText SELECT
 
 
 
--- spliceValues :: Text -> [PersistValue] -> Text
+-- spliceValues :: T.Text -> [PersistValue] -> T.Text
 -- spliceValues query values = 
 --     let
 --         fragments = 
---             Text.splitOn "?" query
+--             T.splitOn "?" query
 --     in
 --         combineTexts fragments (map valueToText values)
 
@@ -3780,13 +3780,12 @@ myRenderQuerySelect = myRenderQueryToText SELECT
 -- combineTexts _ _ = error "we expected two lists of equal length"
 
 
-valueToText :: PersistValue -> T.Text
-valueToText input = case input of
-    (PersistText txt) -> T.pack $ cleanString (T.unpack txt)
-    (PersistInt64 int64) -> T.pack (show int64) 
+-- valueToText :: PersistValue -> T.Text
+-- valueToText input = case input of
+--     (PersistText txt) -> T.pack $ cleanString (T.unpack txt)
+--     (PersistInt64 int64) -> T.pack (show int64) 
 
-convertInt64 :: PersistValue -> T.Text
-convertInt64 (PersistInt64 int64) = T.pack (show int64)  
+
 
 -- todo make a new function cleanText that will work with text, for now I just want to keep moving with this
 -- https://stackoverflow.com/questions/3740621/removing-string-double-quotes-in-haskell/3743602

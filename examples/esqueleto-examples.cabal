@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 7afad0d5347967cfc21e9ab7141f013ac9a25a4476ce5d46a241a2235c46b68e
+-- hash: 112e48398fb3da675b3ffa5c841e3978841dae11abeeff5d2fd1c9c3588d31e0
 
 name:           esqueleto-examples
 version:        0.0.0.0
@@ -43,6 +43,7 @@ executable blog-example
     , persistent >=2.12
     , persistent-postgresql
     , persistent-sqlite
+    , resourcet
     , transformers-base
     , unliftio-core
   if flag(werror)
