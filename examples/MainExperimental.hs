@@ -45,8 +45,12 @@ import Database.Persist.TH
        , sqlSettings
        )
 import qualified UnliftIO.Resource as R
+
 import qualified Data.Text as T
 import qualified Data.Text.IO as T 
+import Data.Text.Encoding         as T
+
+
 import qualified Control.Monad.Trans.Reader as RD 
 import Database.Esqueleto.Internal.Internal (SqlSelect)
 import Control.Monad.Logger
@@ -302,9 +306,14 @@ myTearDown = do
 callEasyRender qry = do
   --  void $ runBlogT connection . runDB $ do
    splitquery@(txt, vals) <- runDB $ renderQuerySelect qry
+   liftIO $ print "show qry txt"
+   liftIO $ print txt
+
+   liftIO $ putStrLn "qry text"
    liftIO $ T.putStrLn txt
+   liftIO $ putStrLn "qry vals"
    liftIO $ print vals
-   ourquerystring <- runDB $ trace ("tracing...") easyRender' qry
+   ourquerystring <- runDB $  easyRender' qry
    pure ourquerystring
     where 
       connection = "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
@@ -318,7 +327,21 @@ myMain = do
    print "resultB"
    print "..."
    T.putStrLn resultB
+   resultC <- runStderrLoggingT $ runReaderT (callEasyRender queryExampleC) "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
+   print "resultC"
+   print "..."
+   T.putStrLn resultC
 
+   resultD <- runStderrLoggingT $ runReaderT (callEasyRender queryExampleD) "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
+   print "resultD"
+   print "..."
+   T.putStrLn resultD
+
+   resultE <- runStderrLoggingT $ runReaderT (callEasyRender queryExampleE) "host=localhost port=5432 user=myesq dbname=myesq password=myesq"
+   print "resultE"
+   print "..."
+   T.putStrLn resultE
+  
 
 -- renderQuerySelect
 --   :: (SqlSelect a r, BackendCompatible SqlBackend backend,
@@ -355,13 +378,49 @@ queryExampleB = do
                 pure people
 
 
+queryExampleCText = T.pack "SELECT \"person\".\"id\", \"person\".\"name\", \"person\".\"age\"\nFROM \"person\"\nWHERE (\"person\".\"name\" = ?) AND (\"person\".\"age\" >= ?)\n"
+
+aa = T.splitOn ("?") queryExampleCText 
+bb = ["SELECT \"person\".\"id\", \"person\".\"name\", \"person\".\"age\"\nFROM \"person\"\nWHERE (\"person\".\"name\" = ",") AND (\"person\".\"age\" >= ",")\n"]
+-- cc = T.splitOn ("\n") bb
+-- fdf = 1
+
+queryExampleC = do  
+                people <- from $ table @Person
+                where_ (people ^. PersonName ==. val "John")
+                where_ (people ^. PersonAge >=. just (val 18))
+                pure people
+
+queryExampleD = do 
+                people <- from $ table @Person
+                where_ (people ^. PersonName ==. val "John")
+                where_ (people ^. PersonAge >=. just (val 18))
+                where_ (people ^. PersonAge <=. just (val 99))
+                pure people
+
+queryExampleE = do 
+                people <- from $ table @Person
+                where_ (people ^. PersonName ==. val "John")
+                where_ (people ^. PersonAge >=. just (val 18))
+                where_ (people ^. PersonAge <=. just (val 99))
+                where_ (people ^. PersonAge ==. just (val 50))
+                pure people
+
+
 spliceValues :: T.Text -> [PersistValue] -> T.Text
 spliceValues query values = 
     let
-        fragments = 
-            init (T.splitOn "?" query)
+        fragments = init $ (T.splitOn "?" query)
+        seefragments = (T.splitOn "?" query)
     in
-        combineTexts fragments (map valueToText values)
+        (combineTexts fragments (map valueToText values)) <> T.replicate (length fragments -1 ) (T.pack ")")
+      -- the replicate handles this situation
+      -- case (length fragments) of)
+      --   1 -> (combineTexts fragments (map valueToText values))
+      --   2 -> (combineTexts fragments (map valueToText values)) <> (T.pack ")")
+      --   3 -> (combineTexts fragments (map valueToText values)) <> (T.pack ")") <> (T.pack ")")
+      --   4 -> (combineTexts fragments (map valueToText values)) <> (T.pack ")") <> (T.pack ")") <> (T.pack ")")
+
 
 combineTexts :: [T.Text] -> [T.Text] -> T.Text
 combineTexts [] [] = mempty 
@@ -372,7 +431,13 @@ combineTexts _ _ = error "we expected two lists of equal length"
 valueToText :: PersistValue -> T.Text
 valueToText input = case input of
     (PersistText txt) -> (T.singleton '\'') <> txt <> (T.singleton '\'')
-    (PersistInt64 int64) -> T.pack (show int64) 
+    (PersistInt64 int64) -> T.pack (show int64)
+    (PersistByteString btstr) -> T.decodeUtf8 btstr
+    (PersistDouble dbl) -> T.pack (show dbl)
+    (PersistDay day) -> T.pack $ show day	
+    (PersistTimeOfDay timeofday) -> T.pack $ show timeofday
+    (PersistUTCTime utctime) -> T.pack $ show utctime 
+    _ -> error "unsupported"	
     -- missing a whole lot of cases, TODO
 
 
@@ -383,9 +448,6 @@ convertInt64 :: PersistValue -> T.Text
 convertInt64 (PersistInt64 int64) = T.pack (show int64)  
 --                       = s
 
--- myText = SELECT "person"."id", "person"."name", "person"."age"
---          FROM "person"
---          WHERE ("person"."name" = ?) AND ("person"."age" >= ?)
 
 rawsqlA =  "SELECT \"person\".\"id\", \"person\".\"name\", \"person\".\"age\"\nFROM \"person\"\nWHERE (\"person\".\"name\" = ?) AND (\"person\".\"age\" >= ?)\n"
 
